@@ -1,2 +1,6 @@
 Ref_Materials/
 .vscode/
+__pycache__/
+.ipynb_checkpoints/
+datasets/merged_financial_data_news.csv
+
