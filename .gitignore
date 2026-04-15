@@ -17,3 +17,5 @@ artifacts/**/*.ckpt
 artifacts/**/*.db
 artifacts/**/test_predictions.csv
 artifacts/**/state.json
+
+.codex
