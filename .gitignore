@@ -1,6 +1,13 @@
-.vscode/
-__pycache__/
-.ipynb_checkpoints/
+.env
 dataset/
 Ref_Materials/
 
+__pycache__/
+
+artifacts/**/checkpoints/
+artifacts/**/logs/
+artifacts/**/trials/
+artifacts/**/*.ckpt
+artifacts/**/*.db
+artifacts/**/test_predictions.csv
+artifacts/**/state.json

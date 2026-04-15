@@ -1,250 +1,316 @@
-# Stock Price Prediction Using NLP (FinBERT + LSTM)
+# Nifty50 Trade Decision Support: News-Sentiment to TFT Forecasting Pipeline
 
-A deep learning pipeline that predicts **Nifty 50 closing prices** by combining historical OHLCV data with **news sentiment** extracted via **FinBERT**. The project scrapes financial news, computes sentiment scores, engineers time-series features, and trains a stacked LSTM model with Bayesian-optimised hyperparameters.
+## What This Project Does
 
----
+This repository builds an end-to-end forecasting workflow for Indian equities:
 
-## Table of Contents
+1. Scrape market news + stock data.
+2. Clean and normalize articles.
+3. Split article impact into `direct`, `sectoral`, and `global`.
+4. Score sentiment with FinBERT.
+5. Merge sentiment with OHLCV and engineer features.
+6. Train/evaluate TFT across multiple windows.
+7. Generate evaluation visualizations.
 
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Project Structure](#project-structure)
-- [Data Pipeline](#data-pipeline)
-- [Model Details](#model-details)
-- [Setup & Installation](#setup--installation)
-- [Usage](#usage)
-- [Results](#results)
-- [License](#license)
 
 ---
 
-## Overview
+## Public Dataset and Model Links
 
-| Aspect | Details |
-|---|---|
-| **Market** | NSE Nifty 50 (50 stocks) |
-| **Date Range** | January 2023 – February 2026 |
-| **News Source** | Financial Express (Business & Market sections) |
-| **Sentiment Model** | [ProsusAI/FinBERT](https://huggingface.co/ProsusAI/finbert) |
-| **Prediction Model** | Stacked 2-layer LSTM (TensorFlow/Keras) |
-| **HP Tuning** | Bayesian Optimisation via Keras Tuner |
-| **Prediction Target** | Next-day closing price per ticker |
+- Kaggle Dataset: `https://www.kaggle.com/datasets/mveen3/6-year-indian-stock-market-dataset-news-and-ticker`
+- Kaggle Model: `https://www.kaggle.com/models/mveen3/tft-model-for-stock-price-prediction`
+- Hugging Face Dataset: `https://huggingface.co/datasets/mveen3/Six_Year_Indian_Stock_Market_Dataset-News_and_Ticker`
+- Hugging Face Model: `https://huggingface.co/mveen3/TFT_Model_For_Stock_Price_Prediction`
 
 ---
 
-## Architecture
+## Repository Structure (Current View)
 
-```
-Financial Express  ──►  Web Scraper  ──►  Cleaned News CSV
-                                              │
-                                         FinBERT Sentiment
-                                         (pos / neg / neu)
-                                              │
-Yahoo Finance  ──►  OHLCV Extractor  ──►  Merged Dataset  ──►  LSTM  ──►  Predicted Close
-(Nifty 50)          (yfinance)            (prices + sentiment)
-```
-
-1. **Scrape** financial news articles (multi-threaded).
-2. **Clean & preprocess** text and price data.
-3. **Score sentiment** per day using FinBERT (GPU-accelerated, sliding-window batched inference).
-4. **Merge** daily sentiment scores with per-ticker OHLCV data.
-5. **Engineer features**: 10-day lagged features for Close, Open, High, Low, Volume, and sentiment scores.
-6. **Train** a 2-layer LSTM with tuned hyperparameters; evaluate on a chronological test split.
-
----
-
-## Project Structure
-
-```
-├── financial_express_scraper.py       # Multi-threaded news scraper (Financial Express)
-├── nifty50_yfinance_extractor.py      # Downloads Nifty 50 OHLCV data via yfinance
-├── preprocessor.py                    # 4-phase preprocessing pipeline (merge, clean, features, calendar)
-├── finBERT_Sen_Final.ipynb            # FinBERT sentiment analysis → merged dataset
-├── pred_LSTM_final.ipynb              # Final LSTM training, evaluation & visualisation
-├── HPT_10days.ipynb                   # Hyperparameter tuning (10-day window, Bayesian Opt.)
-├── HPT_7-15-30Days.ipynb              # Hyperparameter tuning across 7/15/30-day windows
-├── cleaned_news.csv                   # Pre-cleaned news articles
-├── nifty50_historical_prices.csv      # Raw Nifty 50 OHLCV data
-├── merged_financial_data_news.csv     # Final merged dataset (prices + sentiment)
-├── lstm_stock_predictor_norm_2lstm_tsip.keras  # Trained LSTM model weights
-├── checkpoints/
-│   └── best_lstm.keras                # Best checkpoint from training
-└── Old/                               # Earlier experimental notebooks
+```text
+root/
+|-- src/
+|   |-- 0_preprocess_news.py
+|   |-- 1a_openai_news_segregation.py
+|   |-- 1b_qwen_news_segregation.py
+|   |-- 2_finbert_sentiment.py
+|   |-- 3_feature_engineering.py
+|   |-- 4_tft_hpt_train_test.py
+|   |-- 5_tft_visualize.py
+|   `-- scrapers/
+|       |-- businessstandard_scraper.py
+|       |-- economictimes_scraper.py
+|       |-- financialexpress_scraper.py
+|       |-- moneycontrol_scraper.py
+|       `-- nifty_yfinance_scraper.py
+|-- dataset/
+|   |-- raw_dataset/
+|   |-- stock_dataset/
+|   |-- news_segregation_checkpoints/
+|   |-- processed_news_dataset.csv
+|   |-- tier_segregated_news.csv
+|   |-- news_sentiment.csv
+|   `-- tft_ready.csv
+`--- artifacts/
+    |-- tft/
+    |-- tft_tune/
+    `-- visualizations/
 ```
 
 ---
 
-## Data Pipeline
+## Pipeline Flow (Stage by Stage)
 
-### 1. News Scraping (`financial_express_scraper.py`)
+### Stage 0: Data Collection
 
-- Scrapes the **Business** and **Market** sections of Financial Express.
-- Uses 20 concurrent threads with retry logic.
-- Extracts article date, title, body, author, and URL.
-- Date range: **Sep 1, 2025 – Feb 28, 2026**.
+- News scraping from Moneycontrol, Financial Express, Economic Times, Business Standard.
+- Ticker OHLCV scraping from Yahoo Finance for Nifty constituents.
 
-### 2. Price Extraction (`nifty50_yfinance_extractor.py`)
+### Stage 1: Preprocessing
 
-- Downloads daily OHLCV + Adj Close for all **50 Nifty 50 tickers** via `yfinance`.
-- Covers **Jan 1, 2023 – Feb 28, 2026**.
-- Outputs a flat CSV with columns: `Date, Ticker, Open, High, Low, Close, Adj Close, Volume`.
+- `src/0_preprocess_news.py`
+- Merges `*_raw.csv`, cleans text, validates dates, deduplicates by URL, applies length filtering.
+- Output: `dataset/processed_news_dataset.csv`.
 
-### 3. Preprocessing (`preprocessor.py`)
+### Stage 2: News Segregation
 
-A 4-phase crash-resilient pipeline:
+Two supported pipelines:
 
-| Phase | Description | Output |
-|---|---|---|
-| **Phase 1** | Merge raw `*_news.csv` files, normalize columns, deduplicate by URL | `combined_market_news.csv` |
-| **Phase 2** | HTML decode, remove boilerplate, filter short articles, enforce date range | `cleaned_news.csv` |
-| **Phase 3** | Holiday/stale-row removal, sector tagging, 13 technical indicators per ticker | `cleaned_prices.csv`, `price_features.csv` |
-| **Phase 4** | Trading calendar, daily news volume computation | `trading_calendar.csv`, `daily_news_volume.csv` |
+- `src/1a_openai_news_segregation.py` (OpenAI API)
+- `src/1b_qwen_news_segregation.py` (local Ollama Qwen)
 
-### 4. Sentiment Analysis (`finBERT_Sen_Final.ipynb`)
+Both classify each article into `direct`, `sectoral`, `global`, with checkpoint/resume support.
 
-- Loads `cleaned_news.csv`; cleans text (lowercase, remove punctuation, lemmatize, drop stopwords) using multiprocessing.
-- Concatenates all articles per day into a single document.
-- Runs **ProsusAI/FinBERT** with a sliding-window strategy (window=512, stride=256) and batched GPU inference (FP16).
-- Produces per-day `pos_score`, `neg_score`, `neu_score`.
-- Left-joins sentiment scores with `nifty50_historical_prices.csv` → outputs `merged_financial_data_news.csv`.
+Expected downstream output:
+- `dataset/tier_segregated_news.csv`
 
----
+### Stage 3: Sentiment Scoring
 
-## Model Details
+- `src/2_finbert_sentiment.py`
+- FinBERT sentiment over all three news channels, with unique-text dedup and sliding windows for long texts.
+- Output: `dataset/news_sentiment.csv`.
 
-### Features
+### Stage 4: Feature Engineering
 
-| Feature Type | Columns |
-|---|---|
-| **Price** | Open, High, Low, Close, Volume |
-| **Sentiment** | pos_score, neg_score, neu_score |
-| **Ticker** | ticker_scaled (MinMax-encoded ticker ID) |
-| **Lagged** | 10-day lags for each of the 8 features above |
+- `src/3_feature_engineering.py`
+- Merges sentiment + ticker data, adds technical features (RSI, MACD, volatility, MA ratios), builds target and `time_idx`.
+- Output: `dataset/tft_ready.csv`.
 
-Total input per sample: **11 timesteps × 9 features** (reshaped for LSTM).
+### Stage 5: Modeling (TFT)
 
-### LSTM Architecture
+- `src/4_tft_hpt_train_test.py`
+- Unified menu for tune/train/test/inference.
+- Artifacts written under `artifacts/tft_tune` and `artifacts/tft`.
 
-```
-Input (11 × 9)
-    │
-LSTM (64 units, return_sequences=True)
-    │
-Dropout (0.3)
-    │
-LSTM (32 units)
-    │
-Dropout (0.3)
-    │
-Dense (64, ReLU)
-    │
-Dense (1) → Predicted Close Price
-```
+### Stage 6: Visualization
 
-### Hyperparameter Tuning
-
-Bayesian Optimisation (Keras Tuner, 20 trials) explored:
-
-| Hyperparameter | Search Space | Best Value |
-|---|---|---|
-| `lstm_units_1` | {64, 128, 256} | 64 |
-| `lstm_units_2` | {32, 64, 128} | 32 |
-| `dropout_rate` | 0.1 – 0.5 | 0.3 |
-| `dense_units` | {16, 32, 64} | 64 |
-| `learning_rate` | 1e-4 – 1e-2 (log) | 0.0021 |
-
-### Training Configuration
-
-- **Loss**: MSE
-- **Optimizer**: Adam (lr = 0.0021)
-- **Batch size**: 64
-- **Max epochs**: 120 (EarlyStopping patience=15)
-- **LR scheduler**: ReduceLROnPlateau (factor=0.5, patience=7)
-- **Data split**: 80/10/10 (train/val/test, chronological)
-- **Seed**: 32 (reproducible)
+- `src/5_tft_visualize.py`
+- Generates:
+  - `best_window_actual_vs_predicted.png`
+  - `per_window_metrics.png`
+  - `best_window_stock_mape.png`
 
 ---
 
-## Setup & Installation
+## Dataset Snapshot (Current Files)
 
-### Prerequisites
+Observed local row counts (excluding header):
 
-- Python 3.10+
-- Conda (recommended) or pip
-- NVIDIA GPU with CUDA (optional, for faster training & inference)
+- `dataset/raw_dataset/businessstandard_raw.csv`: 49,046
+- `dataset/raw_dataset/economictimes_raw.csv`: 90,417
+- `dataset/raw_dataset/financialexpress_raw.csv`: 156,214
+- `dataset/raw_dataset/moneycontrol_raw.csv`: 15,855
+- `dataset/processed_news_dataset.csv`: 309,042
+- `dataset/tier_segregated_news.csv`: 125,510
+- `dataset/news_sentiment.csv`: 125,510
+- `dataset/stock_dataset/nifty50_ticker.csv`: 74,438
+- `dataset/tft_ready.csv`: 71,938
 
-### Environment Setup
+Schema progression:
+
+- Raw: `date,title,news,url`
+- Segregated: `date,symbol,direct_news,sectoral_news,global_news`
+- Sentiment: 9 sentiment probabilities + 3 count columns
+- TFT-ready: market features + sentiment features + `target_pct_change` + `time_idx`
+
+---
+
+## Environment and Dependency Installation (Conflict-Safe)
+
+All commands must run in conda env `nlp_project`.
 
 ```bash
-# Create and activate conda environment
-conda create -n ml python=3.10 -y
-conda activate ml
+conda activate nlp_project
+```
 
-# Core dependencies
-conda install pandas numpy scikit-learn matplotlib seaborn -c conda-forge
-conda install -c conda-forge yfinance
-conda install requests beautifulsoup4
+### Why these pinned versions
 
-# Deep learning
-pip install tensorflow[and-cuda]    # or: conda install tensorflow-gpu
-pip install transformers
-pip install keras-tuner
+TFT reliability here depends on version alignment among:
 
-# NLP
-pip install nltk torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+- `torch`
+- `lightning` / `pytorch-lightning`
+- `pytorch-forecasting`
+- `optuna` + `optuna-integration`
+- `numpy` / `pandas` / `scikit-learn`
+
+`pytorch-forecasting==1.1.1` is sensitive to major-version drift, so this README keeps a locked compatibility set.
+
+### Exact installation commands
+
+```bash
+# Optional clean rebuild
+conda remove -n nlp_project --all -y
+
+# Create env
+conda create -n nlp_project python=3.10 pip setuptools wheel -y
+conda activate nlp_project
+conda config --env --set channel_priority strict
+
+# 1) Core scientific + scraper dependencies (defaults priority)
+conda install -y \
+  numpy=1.26.4 pandas=2.2.2 scipy=1.15.3 scikit-learn=1.4.2 \
+  matplotlib=3.8.* tqdm pyarrow=16.0.0 \
+  requests aiohttp beautifulsoup4 lxml selenium python-dotenv yfinance
+
+# 2) PyTorch CUDA stack
+conda install -y -c pytorch -c nvidia \
+  pytorch=2.2.2 torchvision=0.17.2 torchaudio=2.2.2 pytorch-cuda=11.8
+
+# 3) Forecasting/tuning/NLP stack (conda-forge fallback layer)
+conda install -y -c conda-forge \
+  lightning=2.2.4 pytorch-lightning=2.2.4 pytorch-forecasting=1.1.1 \
+  optuna=3.6.1 optuna-integration=3.6.0 ta=0.11.0 \
+  transformers openai aiofiles curl_cffi
+
+# 4) Pip last-resort package used by the Qwen pipeline
+pip install ollama
+
+# 5) Dependency conflict check
+python -m pip check
+
+# 6) Quick compatibility check
+python -c "import torch, lightning, pytorch_lightning, pytorch_forecasting, optuna, optuna_integration, numpy, pandas, sklearn; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'gpu', torch.cuda.is_available()); print('lightning', lightning.__version__, 'pl', pytorch_lightning.__version__, 'pf', pytorch_forecasting.__version__)"
 ```
 
 ---
 
-## Usage
-
-### 1. Scrape News
+## How to Run (End-to-End Commands)
 
 ```bash
-conda activate ml
-python financial_express_scraper.py
+conda activate nlp_project
 ```
 
-### 2. Download Price Data
+### 0) Optional: refresh source datasets
 
 ```bash
-python nifty50_yfinance_extractor.py
+python src/scrapers/moneycontrol_scraper.py
+python src/scrapers/financialexpress_scraper.py
+python src/scrapers/economictimes_scraper.py
+python src/scrapers/businessstandard_scraper.py
+python src/scrapers/nifty_yfinance_scraper.py --index nifty50 --start 2020-01-01 --end 2026-03-31
 ```
 
-### 3. Run Preprocessing
+### 1) Preprocess merged news
 
 ```bash
-python preprocessor.py              # full pipeline
-python preprocessor.py --skip-merge  # skip Phase 1 if already merged
-python preprocessor.py --force       # re-run all steps
+python src/0_preprocess_news.py
 ```
 
-### 4. Generate Sentiment Scores
+### 2A) Run OpenAI segregation
 
-Open and run all cells in **`finBERT_Sen_Final.ipynb`**. This produces `merged_financial_data_news.csv`.
+```bash
+python src/1a_openai_news_segregation.py
+```
 
-### 5. Train the LSTM Model
+### 2B) Run Qwen segregation [If OpenAI API key is not available]
 
-Open and run all cells in **`pred_LSTM_final.ipynb`**. The trained model is saved to `lstm_stock_predictor_norm_2lstm_tsip.keras`.
+Start Ollama separately:
 
-### 6. Hyperparameter Tuning
+```bash
+ollama serve
+ollama pull qwen2.5:3b
+```
 
-- **10-day window**: `HPT_10days.ipynb`[Got best hyperparameter from this]
-- **7/15/30-day windows**: `HPT_7-15-30Days.ipynb`
+Then run:
+
+```bash
+python src/1b_qwen_news_segregation.py
+```
+
+Menu:
+- `1` NER only
+- `2` CSV only
+- `3` Full pipeline
+
+### 3) Run FinBERT sentiment
+
+```bash
+python src/2_finbert_sentiment.py
+```
+
+### 4) Build TFT-ready features
+
+```bash
+python src/3_feature_engineering.py
+```
+
+### 5) TFT run (menu-based)
+
+```bash
+python src/4_tft_hpt_train_test.py --data-path dataset/tft_ready.csv --windows 7,10,15,30
+```
+
+Menu:
+- `0` tune + train + test
+- `1` train + test
+- `2` inference only
+- `3` exit
+
+### 6) Generate plots
+
+```bash
+python src/5_tft_visualize.py \
+  --artifact-root artifacts/tft \
+  --ticker-path dataset/stock_dataset/nifty50_ticker.csv \
+  --windows 7,10,15,30 \
+  --output-dir artifacts/visualizations \
+  --dpi 300
+```
 
 ---
 
-## Results
+## What Each Main File Does
 
-The final model is evaluated on a chronological test set with the following metrics:
+### Core pipeline
 
-- **MSE** (Mean Squared Error)
-- **MAE** (Mean Absolute Error)
-- **RMSE** (Root Mean Squared Error)
-- **MAPE** (Mean Absolute Percentage Error) — computed per ticker
+- `src/0_preprocess_news.py`: merges and cleans raw article files.
+- `src/1a_openai_news_segregation.py`: OpenAI-based article extraction/classification + checkpointed aggregation.
+- `src/1b_qwen_news_segregation.py`: Qwen/Ollama-based article extraction/classification + checkpointed aggregation.
+- `src/2_finbert_sentiment.py`: FinBERT sentiment feature generation.
+- `src/3_feature_engineering.py`: feature engineering and final training table creation.
+- `src/4_tft_hpt_train_test.py`: unified TFT menu runner for tune/train/test/inference.
+- `src/5_tft_visualize.py`: final metric and chart generation.
 
-The notebooks produce:
-- Actual vs. Predicted close price plots (full test set)
-- Per-ticker MAPE rankings
-- Top-5 lowest-MAPE stock visualisations with individual subplots
+### Scrapers
+
+- `src/scrapers/moneycontrol_scraper.py`: async scraper with TLS impersonation.
+- `src/scrapers/financialexpress_scraper.py`: async + process-pool scraper with checkpointing.
+- `src/scrapers/economictimes_scraper.py`: sitemap-based historical scraper.
+- `src/scrapers/businessstandard_scraper.py`: hybrid `curl_cffi` + Selenium scraper.
+- `src/scrapers/nifty_yfinance_scraper.py`: index constituent + price downloader.
+
+---
+
+## Current Result Snapshot (from Existing Artifacts)
+
+From `artifacts/tft/metrics_summary.csv`:
+
+- W7 MAPE: `1.0487`
+- W10 MAPE: `1.0582`
+- W15 MAPE: `1.0470` (best in current snapshot)
+- W30 MAPE: `1.0574`
+- W15 Directional Accuracy: `0.5061`
+- W15 F1 (`f1_up`): `0.5014`
+
+Tuning summary is available in `artifacts/tft_tune/tuning_summary.csv`.
+
 
