@@ -1,8 +1,14 @@
 .env
-dataset/
 Ref_Materials/
 
 __pycache__/
+
+dataset/news_segregation_checkpoints
+dataset/raw_dataset
+dataset/stock_dataset
+dataset/news_sentiment.csv
+dataset/processed_news_dataset.csv
+dataset/tier_segregated_news.csv
 
 artifacts/**/checkpoints/
 artifacts/**/logs/
